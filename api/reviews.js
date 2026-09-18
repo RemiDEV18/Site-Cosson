@@ -1,9 +1,5 @@
 // Fonction serveur Vercel : récupère les avis Google Business Profile
-// et les renvoie au site (voir /README.md pour la configuration).
-//
-// Variables d'environnement nécessaires (à définir dans Vercel > Settings > Environment Variables) :
-//   GOOGLE_PLACES_API_KEY = votre clé API Google Places
-//   GOOGLE_PLACE_ID       = l'identifiant Google Place de votre fiche établissement
+// Version compatible avec Places API (NEW)
 
 module.exports = async (req, res) => {
   try {
@@ -15,40 +11,38 @@ module.exports = async (req, res) => {
       return;
     }
 
-    const fields = 'name,rating,user_ratings_total,reviews,url';
-    const url =
-      'https://maps.googleapis.com/maps/api/place/details/json' +
-      '?place_id=' + encodeURIComponent(placeId) +
-      '&fields=' + encodeURIComponent(fields) +
-      '&language=fr' +
-      '&reviews_no_translations=true' +
-      '&key=' + apiKey;
+    // URL de la nouvelle API Google Places
+    const url = `https://places.googleapis.com/v1/places/${encodeURIComponent(placeId)}?fields=reviews,rating,userRatingCount,googleMapsUri&languageCode=fr&key=${apiKey}`;
 
-    const apiRes = await fetch(url);
+    const apiRes = await fetch(url, {
+      headers: {
+        'X-Goog-FieldMask': 'reviews,rating,userRatingCount,googleMapsUri'
+      }
+    });
+
     const data = await apiRes.json();
 
-    if (data.status !== 'OK') {
-      res.status(502).json({ error: data.status || 'api_error' });
+    if (data.error) {
+      res.status(502).json({ error: data.error.message || 'api_error' });
       return;
     }
 
-    const result = data.result || {};
-    const reviews = (result.reviews || []).map((rv) => ({
-      author: rv.author_name,
-      photo: rv.profile_photo_url,
-      rating: rv.rating,
-      relativeTime: rv.relative_time_description,
-      text: rv.text
+    const reviews = (data.reviews || []).map((rv) => ({
+      author: rv.authorAttribution?.displayName || null,
+      photo: rv.authorAttribution?.photoUri || null,
+      rating: rv.rating || null,
+      relativeTime: rv.relativePublishTimeDescription || null,
+      text: rv.text || null
     }));
 
-    // Le contenu est mis en cache 6h côté Vercel pour limiter les appels à l'API Google.
     res.setHeader('Cache-Control', 's-maxage=21600, stale-while-revalidate=86400');
     res.status(200).json({
-      rating: typeof result.rating === 'number' ? result.rating : null,
-      total: result.user_ratings_total || 0,
-      mapsUrl: result.url || null,
+      rating: data.rating || null,
+      total: data.userRatingCount || 0,
+      mapsUrl: data.googleMapsUri || null,
       reviews: reviews
     });
+
   } catch (err) {
     res.status(500).json({ error: 'server_error' });
   }
